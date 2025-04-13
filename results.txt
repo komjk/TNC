@@ -1,0 +1,26 @@
+[96m==================================================
+          Network Connection Tester (TNC) v1.0
+     Author: Jeffrey Kroll
+     Description: Comprehensive network testing tool
+==================================================[0m
+
+[+] HTTP(S) Testing for https://example.com
+Method: GET
+Status Code: 200
+Response time: 274.76ms
+
+Response Headers:
+Content-Type: text/html
+ETag: "84238dfc8092e5d9c0dac8ef93371a07:1736799080.121134"
+Last-Modified: Mon, 13 Jan 2025 20:11:20 GMT
+Vary: Accept-Encoding
+Cache-Control: max-age=2862
+Date: Sun, 13 Apr 2025 23:11:20 GMT
+Alt-Svc: h3=":443"; ma=93600,h3-29=":443"; ma=93600,quic=":443"; ma=93600; v="43"
+Content-Length: 1256
+Connection: keep-alive
+
+HTTP Test Results:
+Final URL                     : https://example.com
+Status Code                   : 200
+Response Time (ms)            : 274.76
