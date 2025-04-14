@@ -122,7 +122,9 @@ class TCPTester(BaseNetworkTester):
             )
         
         try:
+            start_time = time.time()
             with socket.create_connection((host, port), timeout=self.config.timeout) as sock:
+                latency = (time.time() - start_time) * 1000  # Convert to milliseconds
                 # TCP test implementation
                 return TestResult(
                     success=True,
@@ -278,31 +280,49 @@ class NetworkTester:
         """Get SSL certificate information for a host"""
         try:
             context = ssl.create_default_context()
+            if not self.verify_ssl:
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                
             with socket.create_connection((hostname, port), timeout=self.timeout) as sock:
-                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
-                    cert = ssock.getpeercert()
-                    if self.verbosity >= 2:
-                        self.logger.debug(f"Raw certificate data: {cert}")
-                    
-                    if not cert:
-                        return {}
-                    
-                    cert_info = {
-                        'subject': dict(x[0] for x in cert['subject']),
-                        'issuer': dict(x[0] for x in cert['issuer']),
-                        'version': cert.get('version', 'unknown'),
-                        'serialNumber': cert.get('serialNumber', 'unknown'),
-                        'notBefore': cert.get('notBefore', 'unknown'),
-                        'notAfter': cert.get('notAfter', 'unknown'),
-                        'subjectAltName': [x[1] for x in cert.get('subjectAltName', [])],
-                        'cipher': ssock.cipher(),
-                        'protocol': ssock.version()
-                    }
-                    self.logger.debug(f"Certificate info gathered: {cert_info}")
-                    return cert_info
+                try:
+                    with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                        cert = ssock.getpeercert()
+                        if self.verbosity >= 2:
+                            self.logger.debug(f"Raw certificate data: {cert}")
+                        
+                        if not cert:
+                            self.logger.warning("No certificate data received")
+                            return {}
+                        
+                        cert_info = {
+                            'subject': dict(x[0] for x in cert['subject']),
+                            'issuer': dict(x[0] for x in cert['issuer']),
+                            'version': cert.get('version', 'unknown'),
+                            'serialNumber': cert.get('serialNumber', 'unknown'),
+                            'notBefore': cert.get('notBefore', 'unknown'),
+                            'notAfter': cert.get('notAfter', 'unknown'),
+                            'subjectAltName': [x[1] for x in cert.get('subjectAltName', [])],
+                            'cipher': ssock.cipher(),
+                            'protocol': ssock.version()
+                        }
+                        self.logger.debug(f"Certificate info gathered: {cert_info}")
+                        return cert_info
+                except ssl.SSLError as e:
+                    self.logger.error(f"SSL handshake failed: {e}")
+                    return {'error': f"SSL Error: {str(e)}"}
+                except Exception as e:
+                    self.logger.error(f"Error processing certificate: {e}")
+                    return {'error': f"Certificate processing error: {str(e)}"}
+        except socket.timeout:
+            self.logger.error(f"Connection to {hostname}:{port} timed out")
+            return {'error': f"Connection timed out after {self.timeout} seconds"}
+        except socket.gaierror as e:
+            self.logger.error(f"DNS resolution error: {e}")
+            return {'error': f"DNS resolution failed: {str(e)}"}
         except Exception as e:
             self.logger.error(f"Error getting SSL certificate: {e}")
-            return {}
+            return {'error': str(e)}
 
     def test_tcp_connection(self, host: str, port: int) -> dict:
         try:
@@ -343,7 +363,9 @@ class NetworkTester:
             if is_https:
                 self.logger.debug(f"Getting SSL certificate information for {parsed_url.netloc}")
                 cert_info = self.get_ssl_cert_info(parsed_url.netloc)
-                if cert_info:
+                if 'error' in cert_info:
+                    self.logger.warning(f"SSL certificate issue: {cert_info['error']}")
+                elif cert_info:
                     self.logger.debug("SSL certificate information obtained successfully")
                 else:
                     self.logger.debug("No SSL certificate information available")
@@ -541,6 +563,19 @@ def main():
         # Let argparse handle the exit for -h/--help
         sys.exit(1)
 
+    # Validate arguments
+    if args.port is not None and (args.port < 1 or args.port > 65535):
+        print(f"{Colors.RED}Error: Port must be between 1 and 65535{Colors.RESET}")
+        sys.exit(1)
+        
+    if args.interval is not None and args.interval < 1:
+        print(f"{Colors.RED}Error: Interval must be at least 1 second{Colors.RESET}")
+        sys.exit(1)
+        
+    if args.count is not None and args.count < 1:
+        print(f"{Colors.RED}Error: Count must be at least 1{Colors.RESET}")
+        sys.exit(1)
+
     # Configure logging based on verbosity
     if args.verbose >= 3:
         logging.basicConfig(level=logging.DEBUG)
@@ -726,6 +761,11 @@ def main():
 def print_ssl_info(ssl_info: dict) -> None:
     """Print SSL certificate information in a formatted way."""
     print(f"\n{Colors.CYAN}SSL Certificate Information:{Colors.RESET}")
+    
+    # Check for errors
+    if 'error' in ssl_info:
+        print_aligned("Error", ssl_info['error'], Colors.RED)
+        return
     
     # Basic certificate information
     if 'subject' in ssl_info:

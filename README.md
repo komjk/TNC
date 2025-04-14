@@ -1,26 +1,24 @@
 # Test Network Connection(s) (TNC)
 
-A powerful, lightweight network testing tool written in Python. TNC provides comprehensive network testing capabilities without requiring any external dependencies.
+A powerful, cross-platform network testing and diagnostics tool written in Python that works without external dependencies. TNC provides comprehensive network connectivity testing, SSL/TLS inspection, and continuous monitoring capabilities using only the Python standard library.
 
 ## Features
 
-- Multiple protocol support (TCP, UDP, HTTP, HTTPS, ICMP)
-- Detailed connection information
-- SSL/TLS certificate inspection with cipher details
-- Continuous monitoring mode with interval control
-- JSON output support
-- Color-coded terminal output
-- Cross-platform compatibility (Windows, macOS, Linux)
-- Verbosity levels for detailed debugging
-- No external dependencies required
-- Clean, professional output format
-- File output with proper line endings
-- Comprehensive error handling
+- **Multi-protocol Testing:** TCP, UDP, HTTP(S), and ICMP (ping)
+- **Detailed Connection Information:** Latency, endpoints, response codes
+- **SSL/TLS Certificate Inspection:** Complete certificate analysis with cipher details
+- **Continuous Monitoring:** Track connectivity with customizable intervals
+- **Flexible Output Formats:** Color-coded terminal output and structured JSON
+- **Cross-platform Compatibility:** Windows, macOS, Linux
+- **Verbosity Controls:** Three levels of detail for troubleshooting
+- **Zero Dependencies:** Uses only the Python standard library
+- **File Output:** Save test results to file with proper formatting
+- **Comprehensive Error Handling:** Detailed error reporting for network issues
 
 ## Requirements
 
-- Python 3.x
-- No external packages required (uses only Python standard library)
+- Python 3.6 or higher
+- No external packages required
 
 ## Installation
 
@@ -29,202 +27,149 @@ A powerful, lightweight network testing tool written in Python. TNC provides com
    ```bash
    chmod +x tnc.py
    ```
-3. (Optional) Move it to your PATH for global access
+3. (Optional) Move it to your PATH for global access:
+   ```bash
+   sudo cp tnc.py /usr/local/bin/tnc
+   ```
 
-## Usage
-
-Basic usage:
-```bash
-./tnc.py <target> [options]
-```
-
-### Basic Examples
+## Quick Start
 
 ```bash
-# Basic TCP test
+# Basic TCP connection test
 ./tnc.py google.com
-
-# Test specific port
-./tnc.py google.com -p 443
 
 # HTTPS test
 ./tnc.py google.com --protocol https
 
 # Ping test
-./tnc.py 8.8.8.8 --protocol icmp
+sudo ./tnc.py 8.8.8.8 --protocol icmp
 
-# Continuous monitoring
-./tnc.py example.com --continuous
+# Monitor a service every 10 seconds
+./tnc.py api.example.com -p 443 --continuous --interval 10
 ```
+
+## Command Options
 
 ### Basic Options
 
 | Option | Description |
 |--------|-------------|
-| `target` | Target host or URL to test (required) |
-| `-p, --port` | Target port number |
-| `-v` | Increase verbosity level (use -v, -vv, or -vvv) |
-| `--protocol` | Protocol to test (icmp, http, https, udp, tcp) |
-| `--timeout` | Connection timeout in seconds (default: 10.0) |
+| `<target>` | Target host, IP address, or URL (required) |
+| `-p, --port PORT` | Target port number |
+| `-v` | Increase verbosity (use -v, -vv, or -vvv) |
+| `--protocol PROTO` | Protocol to test: tcp, http, https, udp, icmp (default: tcp) |
+| `--timeout SEC` | Connection timeout in seconds (default: 10.0) |
 | `-j, --json` | Output results in JSON format |
-| `--output-file` | Write results to specified file |
+| `--output-file FILE` | Write results to specified file |
 
 ### Advanced Options
 
 | Option | Description |
 |--------|-------------|
 | `--continuous` | Enable continuous monitoring |
-| `--interval` | Interval in seconds for continuous checks (default: 5) |
-| `--count` | Number of checks to perform before exiting |
-| `--method` | HTTP method to use (GET, HEAD, POST, PUT, DELETE) |
-| `--headers` | Custom HTTP headers in JSON format |
+| `--interval SEC` | Interval between checks in continuous mode (default: 5) |
+| `--count NUM` | Number of checks to perform before exiting |
+| `--method METHOD` | HTTP method: GET, HEAD, POST, PUT, DELETE (default: GET) |
+| `--headers JSON` | Custom HTTP headers in JSON format |
 | `--no-verify` | Disable SSL certificate verification |
 | `-L, --follow-redirects` | Follow HTTP redirects |
 
-## Advanced Examples
+## Detailed Examples
 
-### HTTPS Test with SSL Information
+### Basic TCP Connection Test
 ```bash
-./tnc.py google.com --protocol https -vvv
+./tnc.py github.com -p 22
 ```
+Tests TCP connectivity to GitHub's SSH port.
 
-### Continuous Monitoring with JSON Output
+### HTTPS with SSL Certificate Inspection
 ```bash
-./tnc.py cloudflare.com --continuous --interval 2 --count 5 --json
+./tnc.py google.com --protocol https -vv
 ```
+Performs HTTPS test with detailed SSL certificate information.
 
-### HTTP Test with Custom Headers
+### Continuous Monitoring with Custom Interval
 ```bash
-./tnc.py api.github.com --protocol https --headers '{"User-Agent": "TNC-Tester/1.0"}'
+./tnc.py api.example.com --continuous --interval 30 --count 10
 ```
+Monitors a service every 30 seconds for 10 iterations.
 
-### SSL Test with Certificate Verification Disabled
+### HTTP Test with Custom Headers and Method
 ```bash
-./tnc.py expired.badssl.com --protocol https --no-verify
+./tnc.py api.github.com --protocol https --method GET --headers '{"Authorization": "token YOUR_TOKEN", "User-Agent": "TNC-Tester/1.0"}'
 ```
+Makes HTTP request with custom headers and authentication.
 
-## Output Examples
-
-### Basic TCP Test
+### Testing Services Behind Redirects
+```bash
+./tnc.py bit.ly/examplelink --protocol https -L
 ```
-==================================================
-     Test Network Connection(s) v1.0
-==================================================
+Tests an HTTPS endpoint while following redirects.
 
-TCP Test Results:
-Connection Status             : Success
-Latency (ms)                 : 37.91
-Local Endpoint               : ('192.168.1.100', 63722)
-Remote Endpoint              : ('142.251.40.110', 80)
+### UDP Port Testing
+```bash
+./tnc.py dns.google -p 53 --protocol udp
 ```
+Tests UDP connectivity to a DNS server.
 
-### HTTPS Test with SSL Information
+### Saving Results to File
+```bash
+./tnc.py cloudflare.com --protocol https --output-file results.txt
 ```
-==================================================
-     Test Network Connection(s) v1.0
-==================================================
-
-HTTP(S) Test Results:
-Status Code                  : 200
-Response Time               : 321.17ms
-
-SSL Certificate Information:
-Subject CN                  : *.google.com
-Organization               : Google LLC
-Issuer CN                  : GTS CA 1C3
-Issuer Org                 : Google Trust Services LLC
-Valid From                 : Jan 10 08:16:45 2024 GMT
-Valid Until                : Apr 3 08:16:44 2024 GMT
-SSL/TLS Protocol           : TLSv1.3
-Cipher Suite               : TLS_AES_256_GCM_SHA384 (256 bits)
-
-Subject Alternative Names:
-  *.google.com
-  *.appengine.google.com
-  *.bdn.dev
-  *.origin-test.bdn.dev
-  *.cloud.google.com
-  *.crowdsource.google.com
-  [...]
-```
+Saves test results to a text file.
 
 ## Verbosity Levels
 
-1. Basic (-v)
-   - Connection status
-   - Basic timing information
-   - Error messages
+TNC provides three verbosity levels to control the amount of output:
 
-2. Detailed (-vv)
-   - Response headers
-   - Connection endpoints
-   - Basic SSL information
-   - Detailed error messages
+1. **Basic** (`-v`, default)
+   - Connection status (success/failure)
+   - Response codes and latency
+   - Basic error messages
 
-3. Debug (-vvv)
-   - Full SSL certificate details
-   - Cipher information
-   - Protocol details
-   - Debug logging
-   - Complete request/response information
+2. **Detailed** (`-vv`)
+   - All basic information
+   - Full headers for HTTP/HTTPS
+   - Local and remote endpoints
+   - SSL certificate details
 
-## Cross-Platform Support
+3. **Debug** (`-vvv`)
+   - All detailed information
+   - Complete SSL/TLS information
+   - Cipher details and protocol versions
+   - Internal operations logging
 
-TNC is designed to work consistently across:
-- Windows
-- macOS
-- Linux
-- Other Unix-like systems
+## Cross-Platform Considerations
 
-Platform-specific features:
-- Proper line endings in file output
-- Appropriate command execution
-- Compatible socket operations
-- Correct path handling
-
-## Error Handling
-
-- Comprehensive error messages
-- SSL/TLS error details
-- Network timeout handling
-- Permission checks for ICMP
-- Invalid input validation
-- File operation error handling
-
-## Notes
-
-- UDP tests may show "filtered" status due to firewall rules
-- ICMP tests may require root/administrator privileges
-- SSL certificate information available for HTTPS tests
-- File paths are normalized for cross-platform compatibility
-- Color output works on all major terminals
-- Debug logging available with -vvv
+- **Windows:** Full support including UDP and TCP tests
+- **macOS/Linux:** ICMP tests require root privileges
+- **All Platforms:** Color output supported in most terminals
 
 ## Troubleshooting
 
-1. **SSL Certificate Issues**
-   - Use `--no-verify` for self-signed certificates
-   - Check certificate validity dates
-   - Verify hostname matches certificate
+### Common Issues
 
-2. **Permission Issues**
-   - Run with elevated privileges for ICMP
-   - Check file write permissions
-   - Verify network access rights
+- **"SSL Certificate Verification Failed"**  
+  Use `--no-verify` to bypass certificate validation or check the certificate's validity.
 
-3. **Connection Problems**
-   - Increase timeout with `--timeout`
-   - Check firewall settings
-   - Verify target host/port
+- **"ICMP testing requires root privileges"**  
+  Run with administrator/root privileges for ICMP tests.
 
-4. **Output Issues**
-   - Use `-j` for machine-readable output
-   - Check file write permissions
-   - Verify terminal color support
+- **"Connection timed out"**  
+  Increase the timeout with `--timeout` or check firewall settings.
+
+- **UDP showing "filtered" status**  
+  Many firewalls block UDP responses; this is normal and indicates the port is likely filtered.
+
+### Performance Tips
+
+- For regular monitoring, use `--count` to limit test runs
+- Reduce verbosity in automated scripts to minimize output
+- JSON output (`-j`) is ideal for parsing in other tools
 
 ## License
 
-This tool is provided as-is under the MIT License.
+This tool is provided under the MIT License.
 
 ## Author
 
