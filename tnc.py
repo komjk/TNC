@@ -11,8 +11,18 @@ import os
 import subprocess
 import re
 import logging
+import platform
+import dataclasses
 from urllib.parse import urlparse
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Union
+from dataclasses import dataclass
+from enum import Enum
+
+# Platform detection
+SYSTEM = platform.system()
+IS_WINDOWS = SYSTEM == 'Windows'
+IS_MACOS = SYSTEM == 'Darwin'
+IS_LINUX = SYSTEM == 'Linux'
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -53,352 +63,99 @@ def log_error(message: str):
 def log_success(message: str):
     logging.info(message)
 
-class NetworkTester:
-    VERBOSITY_LEVELS = {
-        1: "Basic connection info and status",
-        2: "Detailed connection info and timing",
-        3: "Maximum debug output with headers and certificates"
-    }
+class Protocol(Enum):
+    TCP = "tcp"
+    UDP = "udp"
+    HTTP = "http"
+    HTTPS = "https"
+    ICMP = "icmp"
 
-    def __init__(self, verbosity: int = 1, verify_ssl: bool = True, timeout: float = 10.0):
-        self.verbosity = min(verbosity, 3)
-        self.verify_ssl = verify_ssl
-        self.timeout = timeout
-        self.results: Dict[str, Any] = {}
+@dataclass
+class TestConfig:
+    verbosity: int = 1
+    verify_ssl: bool = True
+    timeout: float = 10.0
+    continuous: bool = False
+    interval: int = 5
+    json_output: bool = False
 
-    def print_verbose(self, level: int, message: str, color: str = Colors.WHITE) -> None:
-        """Print message based on verbosity level"""
-        if self.verbosity >= level:
-            print(f"{color}{message}{Colors.RESET}")
+@dataclass
+class TestResult:
+    success: bool
+    protocol: Protocol
+    latency: Optional[float] = None
+    error: Optional[str] = None
+    status: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
 
-    def resolve_dns(self, hostname: str) -> Dict[str, Any]:
-        """Perform DNS resolution using standard socket library"""
-        dns_results = {}
-        try:
-            self.print_verbose(1, f"\n[+] DNS Resolution for {hostname}", Colors.CYAN)
-            
-            # Get A records (IPv4)
-            try:
-                ipv4_addrs = []
-                addrinfo = socket.getaddrinfo(hostname, None, socket.AF_INET)
-                for addr in addrinfo:
-                    if addr[4][0] not in ipv4_addrs:
-                        ipv4_addrs.append(addr[4][0])
-                dns_results['A'] = ipv4_addrs
-                self.print_verbose(1, f"IPv4 Addresses: {', '.join(dns_results['A'])}", Colors.GREEN)
-            except socket.gaierror:
-                dns_results['A'] = []
-                self.print_verbose(1, "No IPv4 addresses found", Colors.YELLOW)
-
-            # Get AAAA records (IPv6) if verbosity > 1
-            if self.verbosity > 1:
-                try:
-                    ipv6_addrs = []
-                    addrinfo = socket.getaddrinfo(hostname, None, socket.AF_INET6)
-                    for addr in addrinfo:
-                        if addr[4][0] not in ipv6_addrs:
-                            ipv6_addrs.append(addr[4][0])
-                    dns_results['AAAA'] = ipv6_addrs
-                    self.print_verbose(2, f"IPv6 Addresses: {', '.join(dns_results['AAAA'])}", Colors.GREEN)
-                except socket.gaierror:
-                    dns_results['AAAA'] = []
-                    self.print_verbose(2, "No IPv6 addresses found", Colors.YELLOW)
-
-        except socket.gaierror as e:
-            dns_results['error'] = f"DNS resolution failed: {str(e)}"
-            self.print_verbose(1, dns_results['error'], Colors.RED)
+class OutputFormatter:
+    def __init__(self, config: TestConfig):
+        self.config = config
         
-        return dns_results
+    def format_result(self, result: TestResult) -> str:
+        if self.config.json_output:
+            return self._format_json(result)
+        return self._format_human_readable(result)
+    
+    def _format_json(self, result: TestResult) -> str:
+        return json.dumps(dataclasses.asdict(result), indent=2)
+    
+    def _format_human_readable(self, result: TestResult) -> str:
+        # Format human readable output with colors
+        pass
 
-    def test_tcp_connection(self, host: str, port: int) -> Dict[str, Any]:
-        """Test TCP connection to host:port with retries."""
-        result = {}
-        start_time = time.time()
-        retries = 3  # Number of retries
+class BaseNetworkTester:
+    def __init__(self, config: TestConfig):
+        self.config = config
+        self.formatter = OutputFormatter(config)
 
-        for attempt in range(retries):
-            try:
-                if not is_valid_url(host):
-                    raise ValueError("Invalid hostname")
-                with socket.create_connection((host, port), timeout=self.timeout) as sock:
-                    end_time = time.time()
-                    latency = (end_time - start_time) * 1000
-                    
-                    result['success'] = True
-                    result['latency'] = latency
-                    result['local_endpoint'] = sock.getsockname()
-                    result['remote_endpoint'] = sock.getpeername()
-                    
-                    self.print_verbose(1, f"\n[+] TCP Connection successful to {host}:{port}", Colors.GREEN)
-                    self.print_verbose(1, f"Latency: {latency:.2f}ms", Colors.GREEN)
-                    self.print_verbose(2, f"Local endpoint: {result['local_endpoint']}", Colors.CYAN)
-                    self.print_verbose(2, f"Remote endpoint: {result['remote_endpoint']}", Colors.CYAN)
-                    
-                    if self.verbosity >= 3:
-                        # Get socket options at highest verbosity
-                        try:
-                            result['socket_options'] = {
-                                'TCP_NODELAY': sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY),
-                                'SO_KEEPALIVE': sock.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE)
-                            }
-                            self.print_verbose(3, "\nSocket Options:", Colors.CYAN)
-                            for opt, val in result['socket_options'].items():
-                                self.print_verbose(3, f"{opt}: {val}", Colors.WHITE)
-                        except Exception as e:
-                            self.print_verbose(3, f"Could not get socket options: {str(e)}", Colors.YELLOW)
-                    
-                    return result  # Return on success
-            except (socket.timeout, ConnectionRefusedError) as e:
-                if attempt < retries - 1:
-                    time.sleep(1)  # Wait before retrying
-                    continue  # Retry
-                result['success'] = False
-                result['error'] = str(e)
-                log_error(f"Connection failed after {retries} attempts: {str(e)}")
-                return result
+    def validate_target(self, target: str) -> bool:
+        return is_valid_url(target)
 
-    def test_http(self, url: str, method: str = 'GET', headers: Dict[str, str] = None) -> Dict[str, Any]:
-        """Perform HTTP(S) testing using http.client"""
-        result = {}
-        parsed_url = urlparse(url)
-        port = parsed_url.port or (443 if parsed_url.scheme == 'https' else 80)
+class TCPTester(BaseNetworkTester):
+    def test(self, host: str, port: int) -> TestResult:
+        if not self.validate_target(host):
+            return TestResult(
+                success=False,
+                protocol=Protocol.TCP,
+                error="Invalid hostname"
+            )
         
         try:
-            self.print_verbose(1, f"\n[+] HTTP(S) Testing for {url}", Colors.CYAN)
-            self.print_verbose(2, f"Method: {method}", Colors.CYAN)
-            
-            start_time = time.time()
-            
-            # Set default headers
-            custom_headers = {'User-Agent': 'tnc/1.0'}
-            if headers:
-                custom_headers.update(headers)
-                
-            self.print_verbose(3, "Request Headers:", Colors.CYAN)
-            for header, value in custom_headers.items():
-                self.print_verbose(3, f"{header}: {value}", Colors.WHITE)
-            
-            if parsed_url.scheme == 'https':
-                context = ssl.create_default_context()
-                if not self.verify_ssl:
-                    logging.warning("SSL verification is disabled. This may expose you to security risks.")
-                    context.check_hostname = False
-                    context.verify_mode = ssl.CERT_NONE
-                conn = http.client.HTTPSConnection(
-                    parsed_url.hostname,
-                    port,
-                    context=context,
-                    timeout=self.timeout
+            with socket.create_connection((host, port), timeout=self.config.timeout) as sock:
+                # TCP test implementation
+                return TestResult(
+                    success=True,
+                    protocol=Protocol.TCP,
+                    latency=latency,
+                    details={
+                        'local_endpoint': sock.getsockname(),
+                        'remote_endpoint': sock.getpeername()
+                    }
                 )
-            else:
-                conn = http.client.HTTPConnection(
-                    parsed_url.hostname,
-                    port,
-                    timeout=self.timeout
-                )
-
-            try:
-                # Follow redirects manually (max 10 redirects)
-                redirect_count = 0
-                current_url = url
-                redirect_history = []
-
-                while redirect_count < 10:
-                    parsed = urlparse(current_url)
-                    path = parsed.path or '/'
-                    if parsed.query:
-                        path += '?' + parsed.query
-
-                    conn.request(method, path, headers=custom_headers)
-                    response = conn.getresponse()
-                    
-                    if response.status in (301, 302, 303, 307, 308):
-                        redirect_history.append({
-                            'status': response.status,
-                            'url': current_url,
-                            'location': response.getheader('Location')
-                        })
-                        current_url = response.getheader('Location')
-                        response.read()  # Clear the response
-                        redirect_count += 1
-                        
-                        # Handle relative redirects
-                        if not current_url.startswith(('http://', 'https://')):
-                            current_url = f"{parsed_url.scheme}://{parsed_url.netloc}{current_url}"
-                        
-                        # Need to create new connection for redirects
-                        conn.close()
-                        parsed_redirect = urlparse(current_url)
-                        if parsed_redirect.scheme == 'https':
-                            conn = http.client.HTTPSConnection(
-                                parsed_redirect.hostname,
-                                parsed_redirect.port or 443,
-                                context=context if parsed_url.scheme == 'https' else ssl.create_default_context(),
-                                timeout=self.timeout
-                            )
-                        else:
-                            conn = http.client.HTTPConnection(
-                                parsed_redirect.hostname,
-                                parsed_redirect.port or 80,
-                                timeout=self.timeout
-                            )
-                    else:
-                        break
-                
-                end_time = time.time()
-                
-                # Basic response info (Level 1)
-                result['status_code'] = response.status
-                result['elapsed'] = (end_time - start_time) * 1000
-                result['final_url'] = current_url
-                
-                self.print_verbose(1, f"Status Code: {response.status}", 
-                                Colors.GREEN if 200 <= response.status < 400 else Colors.RED)
-                self.print_verbose(1, f"Response time: {result['elapsed']:.2f}ms", Colors.GREEN)
-                
-                # Show redirect chain
-                if redirect_history:
-                    self.print_verbose(1, "\nRedirect Chain:", Colors.CYAN)
-                    for redirect in redirect_history:
-                        self.print_verbose(1, 
-                            f"{redirect['status']} -> {redirect['location']}", 
-                            Colors.WHITE)
-                    self.print_verbose(1, f"Final URL: {current_url}", Colors.GREEN)
-                
-                # Headers (Level 2)
-                if self.verbosity >= 2:
-                    result['headers'] = dict(response.getheaders())
-                    self.print_verbose(2, "\nResponse Headers:", Colors.CYAN)
-                    for header, value in response.getheaders():
-                        self.print_verbose(2, f"{header}: {value}", Colors.WHITE)
-                
-                # SSL/TLS info (Level 3)
-                if self.verbosity >= 3 and isinstance(conn, http.client.HTTPSConnection):
-                    try:
-                        ssl_socket = conn.sock
-                        cert = ssl_socket.getpeercert()
-                        result['ssl'] = {
-                            'version': ssl_socket.version(),
-                            'cipher': ssl_socket.cipher(),
-                            'cert_expires': cert.get('notAfter', 'N/A'),
-                            'issuer': dict(x[0] for x in cert.get('issuer', [])),
-                            'subject': dict(x[0] for x in cert.get('subject', []))
-                        }
-                        self.print_verbose(3, "\nSSL/TLS Information:", Colors.CYAN)
-                        self.print_verbose(3, f"SSL Version: {result['ssl']['version']}", Colors.WHITE)
-                        self.print_verbose(3, f"Cipher: {result['ssl']['cipher']}", Colors.WHITE)
-                        self.print_verbose(3, f"Certificate Expires: {result['ssl']['cert_expires']}", Colors.WHITE)
-                        
-                    except Exception as e:
-                        self.print_verbose(3, f"SSL information retrieval failed: {str(e)}", Colors.YELLOW)
-                
-            finally:
-                conn.close()
-                
-        except socket.timeout:
-            result['error'] = "Connection timed out"
-            self.print_verbose(1, f"Connection timed out after {self.timeout}s", Colors.RED)
-        except ssl.SSLError as e:
-            result['error'] = f"SSL Error: {str(e)}"
-            self.print_verbose(1, f"SSL Error: {str(e)}", Colors.RED)
-            self.print_verbose(1, "Try using --no-verify to ignore certificate validation", Colors.YELLOW)
-        except http.client.HTTPException as e:
-            result['error'] = f"HTTP Error: {str(e)}"
-            self.print_verbose(1, f"HTTP Error: {str(e)}", Colors.RED)
         except Exception as e:
-            result['error'] = str(e)
-            self.print_verbose(1, f"HTTP request failed: {str(e)}", Colors.RED)
-            
-        return result
+            return TestResult(
+                success=False,
+                protocol=Protocol.TCP,
+                error=str(e)
+            )
 
-    def test_icmp(self, hostname: str) -> Dict[str, Any]:
-        """Test ICMP (Ping) connection to host"""
-        result = {'success': False}
+class NetworkTestManager:
+    def __init__(self, config: TestConfig):
+        self.config = config
+        self.testers = {
+            Protocol.TCP: TCPTester(config),
+            Protocol.HTTP: HTTPTester(config),
+            # ... other testers
+        }
+    
+    def run_test(self, protocol: Protocol, target: str, port: Optional[int] = None) -> TestResult:
+        tester = self.testers[protocol]
+        result = tester.test(target, port)
         
-        # Sanitize hostname
-        if not is_valid_url(hostname):
-            log_error("Invalid hostname for ICMP test.")
-            return result
-
-        try:
-            # Use platform-agnostic approach
-            ping_param = '-n' if sys.platform.lower() == 'windows' else '-c'
-            command = ['ping', ping_param, '1', hostname]
-            
-            # Execute ping command
-            process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            
-            if process.returncode == 0:
-                result['success'] = True
-                result['status'] = "Host is reachable"
-                # Extract ping time if needed
-                if 'time=' in process.stdout:
-                    try:
-                        time_str = process.stdout.split('time=')[1].split(' ')[0]
-                        result['latency'] = float(time_str)
-                    except (IndexError, ValueError):
-                        pass
-            else:
-                result['status'] = "Host is not reachable"
-                result['error'] = process.stderr
-                
-            self.print_verbose(1, f"\n[+] ICMP Test Results for {hostname}", Colors.CYAN)
-            self.print_verbose(1, f"Status: {result['status']}", 
-                            Colors.GREEN if result['success'] else Colors.RED)
-            
-            if 'latency' in result:
-                self.print_verbose(1, f"Latency (ms): {result['latency']:.2f}", Colors.GREEN)
-            
-        except Exception as e:
-            result['error'] = str(e)
-            result['status'] = f"Error: {str(e)}"
-            self.print_verbose(1, f"ICMP test failed: {str(e)}", Colors.RED)
-            
-        return result
-
-    def test_udp(self, host: str, port: int) -> Dict[str, Any]:
-        """Test UDP connection to host:port"""
-        result = {'success': False}
+        formatter = OutputFormatter(self.config)
+        print(formatter.format_result(result))
         
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(self.timeout)  # Set timeout to avoid hanging
-            
-            self.print_verbose(1, f"\n[+] UDP Testing for {host}:{port}", Colors.CYAN)
-            
-            start_time = time.time()
-            # Send a small payload
-            sock.sendto(b'tnc_udp_probe', (host, port))
-            
-            try:
-                # Try to receive a response
-                data, server = sock.recvfrom(1024)
-                end_time = time.time()
-                latency = (end_time - start_time) * 1000
-                
-                result['success'] = True
-                result['latency'] = latency
-                result['response'] = data.decode('utf-8', errors='ignore') if data else None
-                result['status'] = "Response received"
-                
-                self.print_verbose(1, f"Status: {result['status']}", Colors.GREEN)
-                if result['success']:
-                    self.print_verbose(1, f"Latency: {latency:.2f}ms", Colors.GREEN)
-                
-            except socket.timeout:
-                # For UDP, a timeout doesn't necessarily mean failure - the packet might have been received
-                result['status'] = "No response (server might not send responses)"
-                self.print_verbose(1, f"Status: {result['status']}", Colors.YELLOW)
-                
-        except Exception as e:
-            result['error'] = str(e)
-            result['status'] = f"Error: {str(e)}"
-            self.print_verbose(1, f"UDP test failed: {str(e)}", Colors.RED)
-        
-        finally:
-            if 'sock' in locals():
-                sock.close()
-                
         return result
 
 def print_aligned(key: str, value: str, color: str = Colors.WHITE) -> None:
@@ -407,15 +164,23 @@ def print_aligned(key: str, value: str, color: str = Colors.WHITE) -> None:
 
 def write_output(results, args):
     """Write results to file if specified"""
-    if args.output_file:
+    if args.output_file and args.output_file.strip():  # Check if output file is specified and not empty
         try:
-            with open(args.output_file, 'w') as f:
+            # Normalize path and ensure directory exists
+            output_path = os.path.normpath(args.output_file)
+            output_dir = os.path.dirname(output_path)
+            
+            # Create directory if it doesn't exist and path is not empty
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+            
+            # Use platform-appropriate line endings
+            with open(output_path, 'w', newline='\n') as f:
                 # Write the header
-                f.write(f"{Colors.CYAN}{'='*50}\n")
+                f.write(f"{'='*50}\n")
                 f.write(f"{' '*10}Network Connection Tester (TNC) v1.0\n")
-                f.write(f"{' '*5}Author: Jeffrey Kroll\n")
-                f.write(f"{' '*5}Description: Comprehensive network testing tool\n")
-                f.write(f"{'='*50}{Colors.RESET}\n\n")
+                f.write(f"{' '*5}Test Results - {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"{'='*50}\n\n")
 
                 # Write results based on protocol
                 if args.protocol == 'tcp' and 'tcp' in results:
@@ -443,6 +208,19 @@ def write_output(results, args):
                             for header, value in http_result.get('headers', {}).items():
                                 f.write(f"{header}: {value}\n")
                             f.write("\n")
+                            if 'ssl_info' in http_result:
+                                f.write("SSL Certificate Information:\n")
+                                ssl_info = http_result['ssl_info']
+                                f.write(f"Subject         : {ssl_info.get('subject', {}).get('commonName', 'N/A')}\n")
+                                f.write(f"Issuer          : {ssl_info.get('issuer', {}).get('commonName', 'N/A')}\n")
+                                f.write(f"Valid From      : {ssl_info.get('notBefore', 'N/A')}\n")
+                                f.write(f"Valid Until     : {ssl_info.get('notAfter', 'N/A')}\n")
+                                f.write(f"Serial Number   : {ssl_info.get('serialNumber', 'N/A')}\n")
+                                if ssl_info.get('subjectAltName'):
+                                    f.write("Alternative Names:\n")
+                                    for name in ssl_info['subjectAltName']:
+                                        f.write(f"                  {name}\n")
+                                f.write("\n")
                         f.write("HTTP Test Results:\n")
                         f.write(f"Final URL                     : {http_result.get('final_url', 'N/A')}\n")
                         f.write(f"Status Code                   : {http_result['status_code']}\n")
@@ -451,29 +229,282 @@ def write_output(results, args):
                 elif args.protocol == 'icmp' and 'icmp' in results:
                     icmp_result = results['icmp']
                     f.write(f"[+] ICMP Test Results for {args.target}\n")
-                    f.write(f"Status: {icmp_result['status']}\n")
+                    f.write(f"Status: {icmp_result.get('status', 'unknown')}\n")
                     f.write("ICMP Test Results:\n")
-                    f.write(f"Ping Status                   : {icmp_result['status']}\n")
-                    if 'latency' in icmp_result:
+                    f.write(f"Ping Status                   : {icmp_result.get('status', 'unknown')}\n")
+                    if icmp_result.get('latency') is not None:
                         f.write(f"Latency (ms)                  : {icmp_result['latency']}\n")
 
                 elif args.protocol == 'udp' and 'udp' in results:
                     udp_result = results['udp']
                     f.write(f"[+] UDP Testing for {args.target}:{args.port}\n")
-                    f.write(f"Status: {udp_result['status']}\n")
+                    f.write(f"Status: {udp_result.get('status', 'unknown')}\n")
                     f.write("UDP Test Results:\n")
-                    f.write(f"UDP Status                    : {udp_result['status']}\n")
-                    if 'latency' in udp_result:
+                    f.write(f"UDP Status                    : {udp_result.get('status', 'unknown')}\n")
+                    if udp_result.get('latency') is not None:
                         f.write(f"Latency (ms)                  : {udp_result['latency']:.2f}\n")
+                    if udp_result.get('error'):
+                        f.write(f"Error                         : {udp_result['error']}\n")
+
+                f.write(f"\nTest completed at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         except Exception as e:
-            print(f"{Colors.RED}Error writing to file: {str(e)}{Colors.RESET}")
+            print(f"{Colors.RED}Error writing to file '{args.output_file}': {str(e)}{Colors.RESET}")
+    elif args.output_file == '':
+        print(f"{Colors.YELLOW}Warning: Output file path is empty, skipping file output{Colors.RESET}")
 
-def main():
-    # Display execution header
+class NetworkTester:
+    def __init__(self, verbosity=1, verify_ssl=True, timeout=10.0):
+        self.verbosity = verbosity
+        self.verify_ssl = verify_ssl
+        self.timeout = timeout
+        self._setup_platform_specific()
+        self.logger = logging.getLogger(__name__)
+        if verbosity >= 2:
+            logging.getLogger().setLevel(logging.DEBUG)
+
+    def _setup_platform_specific(self):
+        """Setup platform-specific configurations"""
+        if IS_WINDOWS:
+            self.ping_count_flag = '-n'
+            self.ping_timeout_flag = '-w'
+            self.ping_time_pattern = r'time[=<](\d+)ms'
+        else:
+            self.ping_count_flag = '-c'
+            self.ping_timeout_flag = '-W'
+            self.ping_time_pattern = r'time=(\d+\.\d+) ms'
+
+    def get_ssl_cert_info(self, hostname: str, port: int = 443) -> dict:
+        """Get SSL certificate information for a host"""
+        try:
+            context = ssl.create_default_context()
+            with socket.create_connection((hostname, port), timeout=self.timeout) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert = ssock.getpeercert()
+                    if self.verbosity >= 2:
+                        self.logger.debug(f"Raw certificate data: {cert}")
+                    
+                    if not cert:
+                        return {}
+                    
+                    cert_info = {
+                        'subject': dict(x[0] for x in cert['subject']),
+                        'issuer': dict(x[0] for x in cert['issuer']),
+                        'version': cert.get('version', 'unknown'),
+                        'serialNumber': cert.get('serialNumber', 'unknown'),
+                        'notBefore': cert.get('notBefore', 'unknown'),
+                        'notAfter': cert.get('notAfter', 'unknown'),
+                        'subjectAltName': [x[1] for x in cert.get('subjectAltName', [])],
+                        'cipher': ssock.cipher(),
+                        'protocol': ssock.version()
+                    }
+                    self.logger.debug(f"Certificate info gathered: {cert_info}")
+                    return cert_info
+        except Exception as e:
+            self.logger.error(f"Error getting SSL certificate: {e}")
+            return {}
+
+    def test_tcp_connection(self, host: str, port: int) -> dict:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if IS_WINDOWS:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            else:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            
+            start_time = time.time()
+            sock.settimeout(self.timeout)
+            sock.connect((host, port))
+            latency = (time.time() - start_time) * 1000  # Convert to milliseconds
+            
+            result = {
+                'success': True,
+                'latency': latency,
+                'local_endpoint': sock.getsockname(),
+                'remote_endpoint': sock.getpeername()
+            }
+            
+            sock.close()
+            return result
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def test_http(self, url: str, method='GET', headers=None) -> dict:
+        try:
+            parsed_url = urlparse(url)
+            is_https = parsed_url.scheme == 'https'
+            
+            # Get SSL certificate info for HTTPS connections
+            cert_info = {}
+            if is_https:
+                self.logger.debug(f"Getting SSL certificate information for {parsed_url.netloc}")
+                cert_info = self.get_ssl_cert_info(parsed_url.netloc)
+                if cert_info:
+                    self.logger.debug("SSL certificate information obtained successfully")
+                else:
+                    self.logger.debug("No SSL certificate information available")
+            
+            start_time = time.time()
+            
+            # Create connection based on protocol
+            if is_https:
+                ssl_context = ssl._create_unverified_context() if not self.verify_ssl else ssl.create_default_context()
+                conn = http.client.HTTPSConnection(
+                    parsed_url.netloc,
+                    timeout=self.timeout,
+                    context=ssl_context
+                )
+            else:
+                conn = http.client.HTTPConnection(
+                    parsed_url.netloc,
+                    timeout=self.timeout
+                )
+            
+            path = parsed_url.path or '/'
+            if parsed_url.query:
+                path += '?' + parsed_url.query
+            
+            conn.request(method, path, headers=headers or {})
+            response = conn.getresponse()
+            elapsed = (time.time() - start_time) * 1000  # Convert to milliseconds
+            
+            result = {
+                'success': True,
+                'status_code': response.status,
+                'headers': dict(response.getheaders()),
+                'elapsed': elapsed,
+                'final_url': url,
+                'protocol': 'https' if is_https else 'http',
+                'method': method
+            }
+
+            # Add SSL certificate info
+            if is_https and cert_info:
+                result['ssl_info'] = cert_info
+                self.logger.debug("Added SSL certificate info to result")
+            
+            conn.close()
+            return result
+            
+        except ssl.SSLError as e:
+            self.logger.error(f"SSL Error: {e}")
+            return {
+                'success': False,
+                'error': f"SSL Error: {str(e)}",
+                'protocol': 'https'
+            }
+        except Exception as e:
+            self.logger.error(f"HTTP test error: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'protocol': 'https' if is_https else 'http'
+            }
+
+    def test_icmp(self, host: str) -> dict:
+        try:
+            # Check for root privileges if needed
+            if not IS_WINDOWS and os.geteuid() != 0:
+                return {
+                    'success': False,
+                    'status': 'error',
+                    'error': 'ICMP testing requires root privileges on this platform'
+                }
+            
+            timeout_ms = int(self.timeout * 1000)
+            ping_cmd = [
+                'ping',
+                self.ping_count_flag, '1',
+                self.ping_timeout_flag, str(timeout_ms),
+                host
+            ]
+            
+            result = subprocess.run(ping_cmd, capture_output=True, text=True)
+            success = result.returncode == 0
+            
+            # Parse latency from output if successful
+            latency = None
+            if success:
+                match = re.search(self.ping_time_pattern, result.stdout)
+                if match:
+                    latency = float(match.group(1))
+            
+            return {
+                'success': success,
+                'status': 'alive' if success else 'unreachable',
+                'latency': latency
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'status': 'error',
+                'error': str(e)
+            }
+
+    def test_udp(self, host: str, port: int) -> dict:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            if IS_WINDOWS:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.settimeout(self.timeout)
+            
+            start_time = time.time()
+            sock.sendto(b'', (host, port))
+            
+            try:
+                sock.recvfrom(1024)
+                latency = (time.time() - start_time) * 1000
+                status = 'open'
+            except socket.timeout:
+                latency = None
+                status = 'filtered'
+            
+            sock.close()
+            return {
+                'success': True,
+                'status': status,
+                'latency': latency
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'status': 'error',
+                'error': str(e)
+            }
+
+def print_usage():
+    """Print a clean, user-friendly usage message"""
     print(f"{Colors.CYAN}{'='*50}")
     print(f"{' '*5}Test Network Connection(s) v1.0")
     print(f"{'='*50}{Colors.RESET}\n")
+    print("Usage:")
+    print("  ./tnc.py <target> [options]\n")
+    print("Examples:")
+    print("  ./tnc.py google.com                    # Basic TCP test")
+    print("  ./tnc.py google.com -p 443             # Test specific port")
+    print("  ./tnc.py google.com --protocol https   # HTTPS test")
+    print("  ./tnc.py 8.8.8.8 --protocol icmp      # Ping test")
+    print("  ./tnc.py example.com --continuous      # Continuous monitoring\n")
+    print("Options:")
+    print("  -p, --port PORT        Target port number")
+    print("  -v                     Increase verbosity (max: -vvv)")
+    print("  --protocol PROTO       Protocol to test (tcp|http|https|udp|icmp)")
+    print("  --continuous           Enable continuous monitoring")
+    print("  --interval SEC         Check interval for continuous mode (default: 5)")
+    print("  --timeout SEC          Connection timeout (default: 10.0)")
+    print("  --output-file FILE     Write results to file")
+    print("  --no-verify           Disable SSL verification")
+    print("  -j, --json            Output in JSON format")
+    print(f"\nFor more details, use: {Colors.CYAN}./tnc.py -h{Colors.RESET}")
+
+def main():
+    if len(sys.argv) == 1:
+        print_usage()
+        sys.exit(0)
     
     parser = argparse.ArgumentParser(
         description='Test Network Connection(s) (v1.0)',
@@ -492,9 +523,9 @@ def main():
     parser.add_argument('--protocol', choices=['icmp', 'http', 'https', 'udp', 'tcp'], 
                         default='tcp', help='Protocol to test (default: tcp)')
     parser.add_argument('--interval', type=int, default=5,
-                        help='Interval in seconds for continuous checks (default: 5 seconds)')
+                        help='Interval in seconds for continuous checks (default: 5)')
     parser.add_argument('--continuous', action='store_true',
-                        help='Enable continuous monitoring (default: disabled)')
+                        help='Enable continuous monitoring')
     parser.add_argument('--timeout', type=float, default=10.0,
                         help='Connection timeout in seconds (default: 10.0)')
     parser.add_argument('--method', choices=['GET', 'HEAD', 'POST', 'PUT', 'DELETE'], 
@@ -502,8 +533,27 @@ def main():
     parser.add_argument('--headers', type=str, help='Custom HTTP headers in JSON format')
     parser.add_argument('--output-file', type=str, help='Write results to this file')
     parser.add_argument('--count', type=int, help='Number of checks to perform before exiting')
+
+    # Parse arguments
+    try:
+        args = parser.parse_args()
+    except SystemExit:
+        if len(sys.argv) == 2 and sys.argv[1] in ['-h', '--help']:
+            parser.print_help()
+        else:
+            print_usage()
+        sys.exit(1)
+
+    # Configure logging based on verbosity
+    if args.verbose >= 3:
+        logging.basicConfig(level=logging.DEBUG)
+    elif args.verbose >= 2:
+        logging.basicConfig(level=logging.INFO)
+    else:
+        logging.basicConfig(level=logging.WARNING)
     
-    args = parser.parse_args()
+    logger = logging.getLogger(__name__)
+    logger.debug(f"Verbosity level: {args.verbose}")
     
     # Cap verbosity at 3
     verbosity = min(args.verbose, 3)
@@ -516,9 +566,6 @@ def main():
         except json.JSONDecodeError:
             print(f"{Colors.YELLOW}Invalid JSON for headers, using defaults{Colors.RESET}")
     
-    # Initialize tester
-    tester = NetworkTester(verbosity=verbosity, verify_ssl=not args.no_verify, timeout=args.timeout)
-    
     try:
         url = urlparse(args.target)
         if not url.scheme:
@@ -527,18 +574,19 @@ def main():
         hostname = url.hostname or args.target
         port = args.port or url.port or (443 if url.scheme == 'https' else 80)
 
+        # Initialize tester with proper verbosity
+        tester = NetworkTester(verbosity=verbosity, verify_ssl=not args.no_verify, timeout=args.timeout)
+        logger.debug(f"NetworkTester initialized with verbosity {verbosity}")
+        
         # Check if continuous monitoring is enabled
         if args.continuous:
-            # Continuous monitoring loop
             count = 0
             while True:
-                # Clear screen for better readability in continuous mode
                 if os.name != 'nt':
                     os.system('clear')
                 else:
                     os.system('cls')
                 
-                # Show timestamp
                 current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 print(f"{Colors.CYAN}=== Test run at {current_time} ==={Colors.RESET}\n")
                 
@@ -547,34 +595,35 @@ def main():
                     results['icmp'] = tester.test_icmp(hostname)
                 elif args.protocol in ['http', 'https']:
                     results['http'] = tester.test_http(url.geturl(), method=args.method, headers=custom_headers)
+                    logger.debug(f"HTTP test results: {results['http']}")
                 elif args.protocol == 'udp':
                     results['udp'] = tester.test_udp(hostname, port)
                 elif args.protocol == 'tcp':
                     results['tcp'] = tester.test_tcp_connection(hostname, port)
 
-                # Output results
                 if args.json:
                     print(json.dumps(results, indent=2))
                 else:
-                    # Print results based on the protocol tested
-                    if args.protocol == 'icmp':
-                        print(f"{Colors.CYAN}ICMP Test Results:{Colors.RESET}")
-                        print_aligned("Ping Status", results['icmp']['status'], Colors.GREEN if results['icmp']['success'] else Colors.RED)
-                        if 'latency' in results['icmp']:
-                            print_aligned("Latency (ms)", str(results['icmp']['latency']), Colors.GREEN)
-                    elif args.protocol in ['http', 'https']:
-                        print(f"{Colors.CYAN}HTTP Test Results:{Colors.RESET}")
-                        http_result = results.get('http', {})
-                        print_aligned("Final URL", http_result.get('final_url', 'N/A'), Colors.CYAN)
-                        print_aligned("Status Code", str(http_result.get('status_code', 'N/A')), Colors.GREEN if http_result.get('status_code', 0) < 400 else Colors.RED)
-                        print_aligned("Response Time (ms)", f"{http_result.get('elapsed', 0):.2f}", Colors.GREEN)
-                    elif args.protocol == 'udp':
-                        print(f"{Colors.CYAN}UDP Test Results:{Colors.RESET}")
-                        print_aligned("UDP Status", results['udp']['status'], Colors.GREEN if results['udp']['success'] else Colors.RED)
-                        if 'latency' in results['udp']:
-                            print_aligned("Latency (ms)", f"{results['udp']['latency']:.2f}", Colors.GREEN)
+                    if args.protocol in ['http', 'https']:
+                        http_result = results['http']
+                        print(f"{Colors.CYAN}HTTP(S) Test Results:{Colors.RESET}")
+                        print_aligned("Status Code", str(http_result.get('status_code', 'N/A')), 
+                                   Colors.GREEN if http_result.get('status_code', 500) < 400 else Colors.RED)
+                        print_aligned("Response Time", f"{http_result.get('elapsed', 0):.2f}ms", Colors.GREEN)
+                        
+                        # Check for SSL info
+                        if 'ssl_info' in http_result:
+                            logger.debug("SSL info found in results")
+                            print_ssl_info(http_result['ssl_info'])
+                        else:
+                            logger.debug("No SSL info in results")
+                            
+                        if args.verbose >= 2:
+                            print("\nResponse Headers:")
+                            for header, value in http_result.get('headers', {}).items():
+                                print_aligned(header, value, Colors.WHITE)
+                    
                     elif args.protocol == 'tcp':
-                        print(f"{Colors.CYAN}TCP Test Results:{Colors.RESET}")
                         tcp_result = results['tcp']
                         if tcp_result['success']:
                             print_aligned("Connection Status", "Success", Colors.GREEN)
@@ -584,55 +633,66 @@ def main():
                         else:
                             print_aligned("Connection Status", "Failed", Colors.RED)
                             print_aligned("Error", tcp_result.get('error', 'Unknown error'), Colors.RED)
+                    elif args.protocol == 'udp':
+                        udp_result = results['udp']
+                        print_aligned("UDP Status", udp_result.get('status', 'unknown'), 
+                                   Colors.GREEN if udp_result.get('success', False) else Colors.YELLOW)
+                        if udp_result.get('latency') is not None:
+                            print_aligned("Latency (ms)", f"{udp_result['latency']:.2f}", Colors.GREEN)
+                        if udp_result.get('error'):
+                            print_aligned("Error", udp_result['error'], Colors.RED)
+                    elif args.protocol == 'icmp':
+                        icmp_result = results['icmp']
+                        print_aligned("Ping Status", icmp_result.get('status', 'unknown'), 
+                                   Colors.GREEN if icmp_result.get('success', False) else Colors.RED)
+                        if 'latency' in icmp_result:
+                            print_aligned("Latency (ms)", str(icmp_result['latency']), Colors.GREEN)
 
-                # Write to output file if specified
                 write_output(results, args)
                 
-                # Increment counter and check if we've reached the limit
                 count += 1
                 if args.count and count >= args.count:
                     print(f"\n{Colors.CYAN}Completed {count} checks as requested.{Colors.RESET}")
                     break
                 
-                # Show next check time
                 next_check = time.strftime("%H:%M:%S", time.localtime(time.time() + args.interval))
                 print(f"\n{Colors.YELLOW}Next check at {next_check} (Ctrl+C to exit){Colors.RESET}")
-                time.sleep(args.interval)  # Wait for the specified interval before the next check
+                time.sleep(args.interval)
         else:
-            # Perform a single check based on the specified protocol
             results = {}
             if args.protocol == 'icmp':
                 results['icmp'] = tester.test_icmp(hostname)
             elif args.protocol in ['http', 'https']:
                 results['http'] = tester.test_http(url.geturl(), method=args.method, headers=custom_headers)
+                logger.debug(f"HTTP test results: {results['http']}")
             elif args.protocol == 'udp':
                 results['udp'] = tester.test_udp(hostname, port)
             elif args.protocol == 'tcp':
                 results['tcp'] = tester.test_tcp_connection(hostname, port)
 
-            # Output results for a single check
             if args.json:
                 print(json.dumps(results, indent=2))
             else:
-                # Print results based on the protocol tested
-                if args.protocol == 'icmp':
-                    print(f"{Colors.CYAN}ICMP Test Results:{Colors.RESET}")
-                    print_aligned("Ping Status", results['icmp']['status'], Colors.GREEN if results['icmp']['success'] else Colors.RED)
-                    if 'latency' in results['icmp']:
-                        print_aligned("Latency (ms)", str(results['icmp']['latency']), Colors.GREEN)
-                elif args.protocol in ['http', 'https']:
-                    print(f"{Colors.CYAN}HTTP Test Results:{Colors.RESET}")
-                    http_result = results.get('http', {})
-                    print_aligned("Final URL", http_result.get('final_url', 'N/A'), Colors.CYAN)
-                    print_aligned("Status Code", str(http_result.get('status_code', 'N/A')), Colors.GREEN if http_result.get('status_code', 0) < 400 else Colors.RED)
-                    print_aligned("Response Time (ms)", f"{http_result.get('elapsed', 0):.2f}", Colors.GREEN)
-                elif args.protocol == 'udp':
-                    print(f"{Colors.CYAN}UDP Test Results:{Colors.RESET}")
-                    print_aligned("UDP Status", results['udp']['status'], Colors.GREEN if results['udp']['success'] else Colors.RED)
-                    if 'latency' in results['udp']:
-                        print_aligned("Latency (ms)", f"{results['udp']['latency']:.2f}", Colors.GREEN)
+                if args.protocol in ['http', 'https']:
+                    http_result = results['http']
+                    print(f"{Colors.CYAN}HTTP(S) Test Results:{Colors.RESET}")
+                    print_aligned("Status Code", str(http_result.get('status_code', 'N/A')), 
+                               Colors.GREEN if http_result.get('status_code', 500) < 400 else Colors.RED)
+                    print_aligned("Response Time", f"{http_result.get('elapsed', 0):.2f}ms", Colors.GREEN)
+                    
+                    # Check for SSL info
+                    if 'ssl_info' in http_result:
+                        logger.debug("SSL info found in results")
+                        print_ssl_info(http_result['ssl_info'])
+                    else:
+                        logger.debug("No SSL info in results")
+                        
+                    if args.verbose >= 2:
+                        print("\nResponse Headers:")
+                        for header, value in http_result.get('headers', {}).items():
+                            print_aligned(header, value, Colors.WHITE)
+                
                 elif args.protocol == 'tcp':
-                    print(f"{Colors.CYAN}TCP Test Results:{Colors.RESET}")
                     tcp_result = results['tcp']
                     if tcp_result['success']:
                         print_aligned("Connection Status", "Success", Colors.GREEN)
@@ -642,8 +702,21 @@ def main():
                     else:
                         print_aligned("Connection Status", "Failed", Colors.RED)
                         print_aligned("Error", tcp_result.get('error', 'Unknown error'), Colors.RED)
+                elif args.protocol == 'udp':
+                    udp_result = results['udp']
+                    print_aligned("UDP Status", udp_result.get('status', 'unknown'), 
+                               Colors.GREEN if udp_result.get('success', False) else Colors.YELLOW)
+                    if udp_result.get('latency') is not None:
+                        print_aligned("Latency (ms)", f"{udp_result['latency']:.2f}", Colors.GREEN)
+                    if udp_result.get('error'):
+                        print_aligned("Error", udp_result['error'], Colors.RED)
+                elif args.protocol == 'icmp':
+                    icmp_result = results['icmp']
+                    print_aligned("Ping Status", icmp_result.get('status', 'unknown'), 
+                               Colors.GREEN if icmp_result.get('success', False) else Colors.RED)
+                    if 'latency' in icmp_result:
+                        print_aligned("Latency (ms)", str(icmp_result['latency']), Colors.GREEN)
             
-            # Write to output file if specified
             write_output(results, args)
 
     except KeyboardInterrupt:
@@ -652,6 +725,40 @@ def main():
     except Exception as e:
         print(f"{Colors.RED}Error: {str(e)}{Colors.RESET}")
         sys.exit(1)
+
+def print_ssl_info(ssl_info: dict) -> None:
+    """Print SSL certificate information in a formatted way."""
+    print(f"\n{Colors.CYAN}SSL Certificate Information:{Colors.RESET}")
+    
+    # Basic certificate information
+    if 'subject' in ssl_info:
+        subject = ssl_info['subject']
+        print_aligned("Subject CN", subject.get('commonName', 'N/A'), Colors.WHITE)
+        if 'organizationName' in subject:
+            print_aligned("Organization", subject['organizationName'], Colors.WHITE)
+    
+    if 'issuer' in ssl_info:
+        issuer = ssl_info['issuer']
+        print_aligned("Issuer CN", issuer.get('commonName', 'N/A'), Colors.WHITE)
+        if 'organizationName' in issuer:
+            print_aligned("Issuer Org", issuer['organizationName'], Colors.WHITE)
+    
+    print_aligned("Valid From", ssl_info.get('notBefore', 'N/A'), Colors.WHITE)
+    print_aligned("Valid Until", ssl_info.get('notAfter', 'N/A'), Colors.WHITE)
+    print_aligned("Serial Number", ssl_info.get('serialNumber', 'N/A'), Colors.WHITE)
+    
+    # Protocol and cipher information
+    if ssl_info.get('protocol'):
+        print_aligned("SSL/TLS Protocol", ssl_info['protocol'], Colors.WHITE)
+    if ssl_info.get('cipher'):
+        cipher_info = ssl_info['cipher']
+        print_aligned("Cipher Suite", f"{cipher_info[0]} ({cipher_info[2]} bits)", Colors.WHITE)
+    
+    # Subject Alternative Names
+    if ssl_info.get('subjectAltName'):
+        print(f"\n{Colors.CYAN}Subject Alternative Names:{Colors.RESET}")
+        for name in ssl_info['subjectAltName']:
+            print(f"  {name}")
 
 if __name__ == '__main__':
     main()
