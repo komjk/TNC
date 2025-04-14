@@ -111,58 +111,51 @@ class NetworkTester:
         return dns_results
 
     def test_tcp_connection(self, host: str, port: int) -> Dict[str, Any]:
-        """Test TCP connection to host:port"""
+        """Test TCP connection to host:port with retries."""
         result = {}
         start_time = time.time()
-        
-        try:
-            if not is_valid_url(host):
-                raise ValueError("Invalid hostname")
-            with socket.create_connection((host, port), timeout=self.timeout) as sock:
-                end_time = time.time()
-                latency = (end_time - start_time) * 1000
-                
-                result['success'] = True
-                result['latency'] = latency
-                result['local_endpoint'] = sock.getsockname()
-                result['remote_endpoint'] = sock.getpeername()
-                
-                self.print_verbose(1, f"\n[+] TCP Connection successful to {host}:{port}", Colors.GREEN)
-                self.print_verbose(1, f"Latency: {latency:.2f}ms", Colors.GREEN)
-                self.print_verbose(2, f"Local endpoint: {result['local_endpoint']}", Colors.CYAN)
-                self.print_verbose(2, f"Remote endpoint: {result['remote_endpoint']}", Colors.CYAN)
-                
-                if self.verbosity >= 3:
-                    # Get socket options at highest verbosity
-                    try:
-                        result['socket_options'] = {
-                            'TCP_NODELAY': sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY),
-                            'SO_KEEPALIVE': sock.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE)
-                        }
-                        self.print_verbose(3, "\nSocket Options:", Colors.CYAN)
-                        for opt, val in result['socket_options'].items():
-                            self.print_verbose(3, f"{opt}: {val}", Colors.WHITE)
-                    except Exception as e:
-                        self.print_verbose(3, f"Could not get socket options: {str(e)}", Colors.YELLOW)
-                
-        except socket.timeout:
-            result['success'] = False
-            result['error'] = "Connection timed out"
-            self.print_verbose(1, f"Connection timed out after {self.timeout}s", Colors.RED)
-        except socket.gaierror as e:
-            result['success'] = False
-            result['error'] = f"DNS resolution failed: {str(e)}"
-            self.print_verbose(1, f"DNS resolution failed: {str(e)}", Colors.RED)
-        except ConnectionRefusedError:
-            result['success'] = False
-            result['error'] = "Connection refused"
-            self.print_verbose(1, "Connection refused", Colors.RED)
-        except Exception as e:
-            result['success'] = False
-            result['error'] = str(e)
-            self.print_verbose(1, f"Connection failed: {str(e)}", Colors.RED)
-            
-        return result
+        retries = 3  # Number of retries
+
+        for attempt in range(retries):
+            try:
+                if not is_valid_url(host):
+                    raise ValueError("Invalid hostname")
+                with socket.create_connection((host, port), timeout=self.timeout) as sock:
+                    end_time = time.time()
+                    latency = (end_time - start_time) * 1000
+                    
+                    result['success'] = True
+                    result['latency'] = latency
+                    result['local_endpoint'] = sock.getsockname()
+                    result['remote_endpoint'] = sock.getpeername()
+                    
+                    self.print_verbose(1, f"\n[+] TCP Connection successful to {host}:{port}", Colors.GREEN)
+                    self.print_verbose(1, f"Latency: {latency:.2f}ms", Colors.GREEN)
+                    self.print_verbose(2, f"Local endpoint: {result['local_endpoint']}", Colors.CYAN)
+                    self.print_verbose(2, f"Remote endpoint: {result['remote_endpoint']}", Colors.CYAN)
+                    
+                    if self.verbosity >= 3:
+                        # Get socket options at highest verbosity
+                        try:
+                            result['socket_options'] = {
+                                'TCP_NODELAY': sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY),
+                                'SO_KEEPALIVE': sock.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE)
+                            }
+                            self.print_verbose(3, "\nSocket Options:", Colors.CYAN)
+                            for opt, val in result['socket_options'].items():
+                                self.print_verbose(3, f"{opt}: {val}", Colors.WHITE)
+                        except Exception as e:
+                            self.print_verbose(3, f"Could not get socket options: {str(e)}", Colors.YELLOW)
+                    
+                    return result  # Return on success
+            except (socket.timeout, ConnectionRefusedError) as e:
+                if attempt < retries - 1:
+                    time.sleep(1)  # Wait before retrying
+                    continue  # Retry
+                result['success'] = False
+                result['error'] = str(e)
+                log_error(f"Connection failed after {retries} attempts: {str(e)}")
+                return result
 
     def test_http(self, url: str, method: str = 'GET', headers: Dict[str, str] = None) -> Dict[str, Any]:
         """Perform HTTP(S) testing using http.client"""
@@ -188,6 +181,7 @@ class NetworkTester:
             if parsed_url.scheme == 'https':
                 context = ssl.create_default_context()
                 if not self.verify_ssl:
+                    logging.warning("SSL verification is disabled. This may expose you to security risks.")
                     context.check_hostname = False
                     context.verify_mode = ssl.CERT_NONE
                 conn = http.client.HTTPSConnection(
@@ -321,6 +315,11 @@ class NetworkTester:
         """Test ICMP (Ping) connection to host"""
         result = {'success': False}
         
+        # Sanitize hostname
+        if not is_valid_url(hostname):
+            log_error("Invalid hostname for ICMP test.")
+            return result
+
         try:
             # Use platform-agnostic approach
             ping_param = '-n' if sys.platform.lower() == 'windows' else '-c'
