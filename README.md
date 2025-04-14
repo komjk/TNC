@@ -1,4 +1,4 @@
-# Network Connection Tester (TNC)
+# Test Network Connection(s) (TNC)
 
 A powerful, lightweight network testing tool written in Python. TNC provides comprehensive network testing capabilities without requiring any external dependencies.
 
@@ -100,7 +100,7 @@ python3 tnc.py 8.8.8.8 --protocol icmp --json
 ### Basic TCP Test Output
 ```
 ==================================================
-          Network Connection Tester (TNC) v1.0
+          Test Network Connection(s) v1.0
 ==================================================
 
 [+] TCP Connection successful to google.com:80
@@ -115,7 +115,7 @@ Remote Endpoint               : ('142.251.40.110', 80)
 ### ICMP Test Output
 ```
 ==================================================
-          Network Connection Tester (TNC) v1.0
+          Test Network Connection(s) v1.0
 ==================================================
 
 [+] ICMP Test Results for 8.8.8.8
@@ -128,7 +128,7 @@ Latency (ms)                  : 19.774
 ### HTTPS Test Output (Verbose)
 ```
 ==================================================
-          Network Connection Tester (TNC) v1.0
+          Test Network Connection(s) v1.0
 ==================================================
 
 [+] HTTP(S) Testing for https://example.com

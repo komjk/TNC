@@ -472,11 +472,11 @@ def write_output(results, args):
 def main():
     # Display execution header
     print(f"{Colors.CYAN}{'='*50}")
-    print(f"{' '*5}Network Connection Tester (TNC) v1.0")
+    print(f"{' '*5}Test Network Connection(s) v1.0")
     print(f"{'='*50}{Colors.RESET}\n")
     
     parser = argparse.ArgumentParser(
-        description='Network Connection Tester (v1.0)',
+        description='Test Network Connection(s) (v1.0)',
         formatter_class=argparse.RawDescriptionHelpFormatter)
     
     parser.add_argument('target', help='Target host or URL to test')
