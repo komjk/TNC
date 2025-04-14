@@ -9,8 +9,13 @@ import json
 import http.client
 import os
 import subprocess
+import re
+import logging
 from urllib.parse import urlparse
 from typing import Optional, Dict, Any
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ANSI color codes (no external colorama dependency)
 class Colors:
@@ -20,6 +25,33 @@ class Colors:
     CYAN = '\033[96m'
     WHITE = '\033[97m'
     RESET = '\033[0m'
+
+def is_valid_url(url: str) -> bool:
+    """Validate the URL format."""
+    regex = re.compile(
+        r'^(?:http|ftp)s?://'  # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # domain...
+        r'localhost|'  # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|'  # ...or ipv4
+        r'\[?[A-F0-9]*:[A-F0-9:]+\]?)'  # ...or ipv6
+        r'(?::\d+)?'  # optional port
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    
+    # Check if the URL matches the regex
+    if re.match(regex, url):
+        return True
+    
+    # Additional check for just hostname without scheme
+    if re.match(r'^[a-zA-Z0-9.-]+$', url):
+        return True
+    
+    return False
+
+def log_error(message: str):
+    logging.error(message)
+
+def log_success(message: str):
+    logging.info(message)
 
 class NetworkTester:
     VERBOSITY_LEVELS = {
@@ -84,6 +116,8 @@ class NetworkTester:
         start_time = time.time()
         
         try:
+            if not is_valid_url(host):
+                raise ValueError("Invalid hostname")
             with socket.create_connection((host, port), timeout=self.timeout) as sock:
                 end_time = time.time()
                 latency = (end_time - start_time) * 1000
@@ -94,8 +128,7 @@ class NetworkTester:
                 result['remote_endpoint'] = sock.getpeername()
                 
                 self.print_verbose(1, f"\n[+] TCP Connection successful to {host}:{port}", Colors.GREEN)
-                if result['success']:
-                    self.print_verbose(1, f"Latency: {latency:.2f}ms", Colors.GREEN)
+                self.print_verbose(1, f"Latency: {latency:.2f}ms", Colors.GREEN)
                 self.print_verbose(2, f"Local endpoint: {result['local_endpoint']}", Colors.CYAN)
                 self.print_verbose(2, f"Remote endpoint: {result['remote_endpoint']}", Colors.CYAN)
                 
@@ -113,17 +146,14 @@ class NetworkTester:
                         self.print_verbose(3, f"Could not get socket options: {str(e)}", Colors.YELLOW)
                 
         except socket.timeout:
-            # Handle timeout specifically
             result['success'] = False
             result['error'] = "Connection timed out"
             self.print_verbose(1, f"Connection timed out after {self.timeout}s", Colors.RED)
         except socket.gaierror as e:
-            # Handle DNS resolution errors
             result['success'] = False
             result['error'] = f"DNS resolution failed: {str(e)}"
             self.print_verbose(1, f"DNS resolution failed: {str(e)}", Colors.RED)
         except ConnectionRefusedError:
-            # Handle connection refused
             result['success'] = False
             result['error'] = "Connection refused"
             self.print_verbose(1, "Connection refused", Colors.RED)
