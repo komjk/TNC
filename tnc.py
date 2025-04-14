@@ -538,10 +538,7 @@ def main():
     try:
         args = parser.parse_args()
     except SystemExit:
-        if len(sys.argv) == 2 and sys.argv[1] in ['-h', '--help']:
-            parser.print_help()
-        else:
-            print_usage()
+        # Let argparse handle the exit for -h/--help
         sys.exit(1)
 
     # Configure logging based on verbosity
