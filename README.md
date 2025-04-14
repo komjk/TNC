@@ -228,39 +228,6 @@ When using `--continuous` mode:
    - Check terminal color support if colors aren't displaying
    - File output will match terminal output exactly
 
-## Security Considerations
-
-When using the Network Connection Tester (TNC), please keep the following security considerations in mind:
-
-1. **Input Validation**: 
-   - Ensure that all inputs, especially URLs and headers, are properly validated. The tool includes basic validation, but users should be cautious about the data they provide.
-
-2. **SSL/TLS Verification**:
-   - By default, SSL verification is enabled to protect against man-in-the-middle attacks. If you choose to disable SSL verification using the `--no-verify` option, be aware that this exposes you to potential security risks. Only disable SSL verification if you fully understand the implications.
-
-3. **Error Handling**:
-   - The tool logs errors using the logging module. Avoid exposing sensitive information in error messages. Review logs regularly to ensure no sensitive data is being captured.
-
-4. **Command Injection Prevention**:
-   - The tool sanitizes inputs for subprocess calls to prevent command injection vulnerabilities. Always ensure that inputs are validated before use in system commands.
-
-5. **Network Operations**:
-   - The tool implements retry logic for network operations to handle transient failures. However, be cautious when testing against unknown or untrusted hosts, as this could expose your system to risks.
-
-6. **User Permissions**:
-   - Some tests, such as ICMP, may require elevated permissions. Ensure you have the necessary permissions and understand the implications of running the tool with elevated privileges.
-
-7. **Configuration Management**:
-   - If you plan to extend the tool or integrate it with other systems, avoid hardcoding sensitive information (like API keys). Use environment variables or configuration files to manage sensitive data securely.
-
-8. **Regular Updates**:
-   - Keep the tool and any dependencies up to date to mitigate vulnerabilities. Regularly check for updates and security patches.
-
-9. **Network Security**:
-   - Be aware of your network environment when running tests. Testing against public or untrusted networks can expose your system to risks. Use a secure and trusted network whenever possible.
-
-By following these security considerations, you can help ensure that your use of the Network Connection Tester remains secure and effective.
-
 ## License
 
 This tool is provided as-is under the MIT License.
