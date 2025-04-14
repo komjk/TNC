@@ -101,8 +101,6 @@ python3 tnc.py 8.8.8.8 --protocol icmp --json
 ```
 ==================================================
           Network Connection Tester (TNC) v1.0
-     Author: Jeffrey Kroll
-     Description: Comprehensive network testing tool
 ==================================================
 
 [+] TCP Connection successful to google.com:80
@@ -118,8 +116,6 @@ Remote Endpoint               : ('142.251.40.110', 80)
 ```
 ==================================================
           Network Connection Tester (TNC) v1.0
-     Author: Jeffrey Kroll
-     Description: Comprehensive network testing tool
 ==================================================
 
 [+] ICMP Test Results for 8.8.8.8
@@ -133,8 +129,6 @@ Latency (ms)                  : 19.774
 ```
 ==================================================
           Network Connection Tester (TNC) v1.0
-     Author: Jeffrey Kroll
-     Description: Comprehensive network testing tool
 ==================================================
 
 [+] HTTP(S) Testing for https://example.com
